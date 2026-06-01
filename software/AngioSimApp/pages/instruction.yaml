@@ -1,0 +1,20 @@
+instructions:
+  - title: "1. Persiapan Awal"
+    image: "step1.png"
+    desc: "Tekan tombol START DEVICE pada menu utama untuk memulai inisialisasi sistem."
+
+  - title: "2. Instruksi Operasional"
+    image: "step2.png"
+    desc: "Pilih menu INSTRUCTIONS untuk membaca instruksi operasional sistem."
+
+  - title: "3. Pengaturan Parameter"
+    image: "step3.png"
+    desc: "Pilih menu SETTINGS untuk mengatur parameter simulasi (kamera dan hardware)."
+
+  - title: "4. Monitoring Simulasi"
+    image: "step4.png"
+    desc: "Live fluoroscopy selama prosedur angioplasti berlangsung."
+
+  - title: "3. Monitoring Simulasi"
+    image: "step3.png"
+    desc: "Live fluoroscopy selama prosedur angioplasti berlangsung."

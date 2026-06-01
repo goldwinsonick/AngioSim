@@ -1,0 +1,27 @@
+image_processing:
+- default: 63
+  id: brightness
+  label: 'Brightness (H):'
+  max: 100
+  min: 0
+- default: 50
+  id: contrast
+  label: 'Contrast (S):'
+  max: 100
+  min: 0
+- default: 30
+  id: threshold
+  label: 'Threshold (C):'
+  max: 100
+  min: 0
+pump_control:
+- default: 125
+  id: heart_pump
+  label: 'Heart Pump Strength:'
+  max: 255
+  min: 0
+- default: 100
+  id: water_pump
+  label: 'Water Pump Strength:'
+  max: 255
+  min: 0
