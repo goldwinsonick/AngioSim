@@ -1,0 +1,60 @@
+{
+  "camera_index": 0,
+  "resolution": [
+    1280,
+    720
+  ],
+  "serial_port": "COM7",
+  "session_name": "Integrated Test",
+  "session_notes": "",
+  "pwm_state": {
+    "1": {
+      "mode": 0,
+      "freq": 20000,
+      "always_duty": 150,
+      "sys_duty": 2,
+      "dia_duty": 0,
+      "bpm": 60,
+      "frac": 0.35,
+      "on_ms": 500,
+      "off_ms": 500,
+      "iv_duty": 255
+    },
+    "2": {
+      "mode": 1,
+      "freq": 2000,
+      "always_duty": 0,
+      "sys_duty": 0,
+      "dia_duty": 255,
+      "bpm": 60,
+      "frac": 0.35,
+      "on_ms": 500,
+      "off_ms": 500,
+      "iv_duty": 255
+    },
+    "3": {
+      "mode": 1,
+      "freq": 1000,
+      "always_duty": 0,
+      "sys_duty": 255,
+      "dia_duty": 0,
+      "bpm": 60,
+      "frac": 0.35,
+      "on_ms": 150,
+      "off_ms": 500,
+      "iv_duty": 255
+    },
+    "4": {
+      "mode": 0,
+      "freq": 1000,
+      "always_duty": 50,
+      "sys_duty": 200,
+      "dia_duty": 0,
+      "bpm": 60,
+      "frac": 0.35,
+      "on_ms": 500,
+      "off_ms": 500,
+      "iv_duty": 255
+    }
+  }
+}

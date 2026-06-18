@@ -2,20 +2,17 @@ import time
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QGroupBox, QHBoxLayout,
+    QComboBox, QDoubleSpinBox, QGroupBox, QHBoxLayout,
     QLabel, QPushButton, QSlider, QSpinBox, QStackedWidget, QVBoxLayout,
     QWidget,
 )
 
-# Mode indices for QComboBox / QStackedWidget
 MODE_ALWAYS_ON = 0
 MODE_SYSTOLE_DIASTOLE = 1
 MODE_INTERVAL = 2
 
 
 class DutySlider(QWidget):
-    """Single duty-cycle slider paired with a spinbox (0–255)."""
-
     value_changed = pyqtSignal(int)
 
     def __init__(self, label: str = "", default: int = 0, parent=None):
@@ -45,20 +42,10 @@ class DutySlider(QWidget):
 
 
 class ChannelWidget(QGroupBox):
-    """
-    Controls for one PWM channel.
-    Emits pwm_changed(value: int) whenever the effective duty cycle changes.
-    Timing for Systole/Diastole and Interval modes is managed internally via QTimer.
-    """
-
     pwm_changed = pyqtSignal(int)
+    freq_changed = pyqtSignal(int)   # Hz
 
-    def __init__(
-        self,
-        channel: int,
-        modes: list[str],
-        parent=None,
-    ):
+    def __init__(self, channel: int, modes: list[str], parent=None):
         super().__init__(f"Ch {channel}", parent)
         self._channel = channel
         self._last_duty = -1
@@ -75,16 +62,27 @@ class ChannelWidget(QGroupBox):
         mode_row.addWidget(self._mode_combo)
         layout.addLayout(mode_row)
 
-        # Stacked pages — one per mode
+        # PWM frequency
+        freq_row = QHBoxLayout()
+        freq_row.addWidget(QLabel("Freq (Hz):"))
+        self._freq_spin = QSpinBox()
+        self._freq_spin.setRange(100, 40000)
+        self._freq_spin.setValue(20000)
+        self._freq_spin.setSingleStep(1000)
+        self._freq_spin.valueChanged.connect(self.freq_changed)
+        freq_row.addWidget(self._freq_spin)
+        layout.addLayout(freq_row)
+
+        # Stacked mode pages
         self._stack = QStackedWidget()
         layout.addWidget(self._stack)
 
-        # Always On page
+        # Always On
         self._always_on = DutySlider("Duty:", default=0)
         self._always_on.value_changed.connect(self._on_always_on_changed)
         self._stack.addWidget(self._always_on)
 
-        # Systole/Diastole page
+        # Systole/Diastole
         if MODE_SYSTOLE_DIASTOLE < len(modes):
             sd_widget = QWidget()
             sd_layout = QVBoxLayout(sd_widget)
@@ -111,7 +109,7 @@ class ChannelWidget(QGroupBox):
             sd_layout.addLayout(frac_row)
             self._stack.addWidget(sd_widget)
 
-        # Interval page
+        # Interval
         if MODE_INTERVAL < len(modes):
             iv_widget = QWidget()
             iv_layout = QVBoxLayout(iv_widget)
@@ -143,19 +141,14 @@ class ChannelWidget(QGroupBox):
             self._stack.addWidget(iv_widget)
 
         self._mode_combo.currentIndexChanged.connect(self._stack.setCurrentIndex)
+        self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
 
-        # Internal timer for time-varying modes (50Hz tick)
         self._timer = QTimer(self)
         self._timer.setInterval(20)
         self._timer.timeout.connect(self._tick)
         self._cycle_start_ms = time.monotonic() * 1000
 
-        self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
-
-    # ------------------------------------------------------------------
-
     def activate(self, active: bool) -> None:
-        """Start/stop the internal timer based on board enable state."""
         if active:
             self._cycle_start_ms = time.monotonic() * 1000
             self._timer.start()
@@ -169,9 +162,40 @@ class ChannelWidget(QGroupBox):
             return self._always_on.value()
         return self._last_duty if self._last_duty >= 0 else 0
 
-    # ------------------------------------------------------------------
-    # Slots
-    # ------------------------------------------------------------------
+    def current_freq(self) -> int:
+        return self._freq_spin.value()
+
+    def get_state(self) -> dict:
+        s: dict = {
+            "mode": self._mode_combo.currentIndex(),
+            "freq": self._freq_spin.value(),
+            "always_duty": self._always_on.value(),
+        }
+        if hasattr(self, "_sys_slider"):
+            s["sys_duty"] = self._sys_slider.value()
+            s["dia_duty"] = self._dia_slider.value()
+            s["bpm"] = self._bpm_spin.value()
+            s["frac"] = self._frac_spin.value()
+        if hasattr(self, "_on_spin"):
+            s["on_ms"] = self._on_spin.value()
+            s["off_ms"] = self._off_spin.value()
+            s["iv_duty"] = self._iv_duty_spin.value()
+        return s
+
+    def set_state(self, s: dict) -> None:
+        self._freq_spin.setValue(s.get("freq", 20000))
+        self._always_on.set_value(s.get("always_duty", 0))
+        if hasattr(self, "_sys_slider"):
+            self._sys_slider.set_value(s.get("sys_duty", 200))
+            self._dia_slider.set_value(s.get("dia_duty", 0))
+            self._bpm_spin.setValue(s.get("bpm", 60))
+            self._frac_spin.setValue(s.get("frac", 0.35))
+        if hasattr(self, "_on_spin"):
+            self._on_spin.setValue(s.get("on_ms", 500))
+            self._off_spin.setValue(s.get("off_ms", 500))
+            self._iv_duty_spin.setValue(s.get("iv_duty", 255))
+        # Set mode last so the stacked widget shows the right page
+        self._mode_combo.setCurrentIndex(s.get("mode", 0))
 
     def _on_always_on_changed(self, val: int) -> None:
         if self._mode_combo.currentIndex() == MODE_ALWAYS_ON:
@@ -187,19 +211,16 @@ class ChannelWidget(QGroupBox):
         now_ms = time.monotonic() * 1000
 
         if mode == MODE_SYSTOLE_DIASTOLE:
-            bpm = self._bpm_spin.value()
-            period_ms = 60_000.0 / bpm
+            period_ms = 60_000.0 / self._bpm_spin.value()
             frac = self._frac_spin.value()
             elapsed = (now_ms - self._cycle_start_ms) % period_ms
             duty = self._sys_slider.value() if elapsed < period_ms * frac else self._dia_slider.value()
             self._emit_if_changed(duty)
 
         elif mode == MODE_INTERVAL:
-            on_ms = self._on_spin.value()
-            off_ms = self._off_spin.value()
-            cycle_ms = on_ms + off_ms
+            cycle_ms = self._on_spin.value() + self._off_spin.value()
             elapsed = (now_ms - self._cycle_start_ms) % cycle_ms
-            duty = self._iv_duty_spin.value() if elapsed < on_ms else 0
+            duty = self._iv_duty_spin.value() if elapsed < self._on_spin.value() else 0
             self._emit_if_changed(duty)
 
     def _emit_if_changed(self, duty: int) -> None:
@@ -209,13 +230,9 @@ class ChannelWidget(QGroupBox):
 
 
 class PwmPanel(QGroupBox):
-    """
-    Master PWM control panel.
-    Emits board_enable_changed and pwm_changed — never touches serial directly.
-    """
-
     board_enable_changed = pyqtSignal(bool)
-    pwm_changed = pyqtSignal(int, int)  # channel (1-4), value (0-255)
+    pwm_changed = pyqtSignal(int, int)   # channel (1-4), duty (0-255)
+    freq_changed = pyqtSignal(int, int)  # channel (1-4), freq_hz
 
     def __init__(self, parent=None):
         super().__init__("PWM Control", parent)
@@ -226,7 +243,6 @@ class PwmPanel(QGroupBox):
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
 
-        # Master enable button
         self._btn_enable = QPushButton("Enable Control Board")
         self._btn_enable.setCheckable(True)
         self._btn_enable.setStyleSheet(
@@ -236,34 +252,36 @@ class PwmPanel(QGroupBox):
         self._btn_enable.toggled.connect(self._on_board_toggled)
         layout.addWidget(self._btn_enable)
 
-        # Channel widgets — all identical, fully configurable
         all_modes = ["Always On", "Systole/Diastole", "Interval"]
-
-        self._ch1 = ChannelWidget(1, all_modes)
-        self._ch2 = ChannelWidget(2, all_modes)
-        self._ch3 = ChannelWidget(3, all_modes)
-        self._ch4 = ChannelWidget(4, all_modes)
-
-        self._channels = [self._ch1, self._ch2, self._ch3, self._ch4]
+        self._channels = [ChannelWidget(i + 1, all_modes) for i in range(4)]
 
         for i, ch in enumerate(self._channels):
             layout.addWidget(ch)
-            ch_num = i + 1
-            ch.pwm_changed.connect(lambda val, n=ch_num: self.pwm_changed.emit(n, val))
+            n = i + 1
+            ch.pwm_changed.connect(lambda val, n=n: self.pwm_changed.emit(n, val))
+            ch.freq_changed.connect(lambda hz, n=n: self.freq_changed.emit(n, hz))
 
     def _on_board_toggled(self, checked: bool) -> None:
         self._board_enabled = checked
-        self._btn_enable.setText(
-            "Disable Control Board" if checked else "Enable Control Board"
-        )
+        self._btn_enable.setText("Disable Control Board" if checked else "Enable Control Board")
         for ch in self._channels:
             ch.activate(checked)
         self.board_enable_changed.emit(checked)
         if checked:
-            # Send current duties immediately
             for i, ch in enumerate(self._channels):
                 self.pwm_changed.emit(i + 1, ch.current_duty())
 
     def current_duty(self, channel: int) -> int:
-        """Returns the current duty for a 1-indexed channel."""
         return self._channels[channel - 1].current_duty()
+
+    def current_freq(self, channel: int) -> int:
+        return self._channels[channel - 1].current_freq()
+
+    def get_state(self) -> dict:
+        return {str(i + 1): ch.get_state() for i, ch in enumerate(self._channels)}
+
+    def set_state(self, state: dict) -> None:
+        for i, ch in enumerate(self._channels):
+            ch_state = state.get(str(i + 1))
+            if ch_state:
+                ch.set_state(ch_state)

@@ -1,0 +1,10 @@
+{
+  "label": "top",
+  "frame_width": 1920,
+  "frame_height": 1080,
+  "k1": -1.02,
+  "k2": 0.357,
+  "p1": 0.0,
+  "p2": 0.0,
+  "focal_scale": 1.024
+}

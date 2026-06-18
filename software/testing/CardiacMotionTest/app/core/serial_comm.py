@@ -46,6 +46,9 @@ class SerialThread(QThread):
     def set_pwm(self, channel: int, value: int) -> None:
         self.send_command(f"SET_PWM:{channel}:{value}")
 
+    def set_freq(self, channel: int, freq_hz: int) -> None:
+        self.send_command(f"SET_FREQ:{channel}:{freq_hz}")
+
     def set_board_enable(self, enabled: bool) -> None:
         self.send_command(f"BOARD_ENABLE:{1 if enabled else 0}")
 

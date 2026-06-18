@@ -4,54 +4,25 @@ import cv2
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from core.tracker import HeartTracker
-
 
 class CameraThread(QThread):
     frame_ready = pyqtSignal(np.ndarray)
-    tracking_result = pyqtSignal(dict)
+    frame_size_ready = pyqtSignal(int, int, float)  # width, height, measured_fps
     camera_error = pyqtSignal(str)
 
-    def __init__(self, camera_index: int = 0, fps: int = 30, parent=None):
+    def __init__(self, camera_index: int = 0, target_fps: int = 30,
+                 width: int = 1280, height: int = 720, parent=None):
         super().__init__(parent)
         self._camera_index = camera_index
-        self._target_fps = fps
+        self._target_fps = target_fps
+        self._width = width
+        self._height = height
         self._running = False
-        self._tracker = HeartTracker()
+        self._pending = False   # frame-drop flag
 
-    # ------------------------------------------------------------------
-    # Tracker proxy — called from UI thread, safe because tracker state
-    # is only read inside run() which checks _running flag.
-    # ------------------------------------------------------------------
-
-    def set_roi(self, roi: tuple[int, int, int, int] | None) -> None:
-        self._tracker.set_roi(roi)
-
-    def set_line(self, p1: tuple[int, int], p2: tuple[int, int]) -> None:
-        self._tracker.set_line(p1, p2)
-
-    def set_thresholds(self, lower: int, upper: int) -> None:
-        self._tracker.set_thresholds(lower, upper)
-
-    def set_morph_kernel_size(self, open_k: int, close_k: int) -> None:
-        self._tracker.set_morph_kernel_size(open_k, close_k)
-
-    def set_calibration(self, px_per_mm: float | None) -> None:
-        self._tracker.set_calibration(px_per_mm)
-
-    def set_show_overlay(self, show: bool) -> None:
-        self._tracker.set_show_overlay(show)
-
-    def reset_reference(self) -> None:
-        self._tracker.reset_reference()
-
-    @property
-    def tracker(self) -> HeartTracker:
-        return self._tracker
-
-    # ------------------------------------------------------------------
-    # Thread control
-    # ------------------------------------------------------------------
+    def set_resolution(self, width: int, height: int) -> None:
+        self._width = width
+        self._height = height
 
     def start_capture(self, camera_index: int | None = None) -> None:
         if camera_index is not None:
@@ -63,25 +34,50 @@ class CameraThread(QThread):
         self._running = False
         self.wait(3000)
 
-    # ------------------------------------------------------------------
-    # QThread.run
-    # ------------------------------------------------------------------
+    # Called from UI thread when it finishes displaying a frame
+    def mark_displayed(self) -> None:
+        self._pending = False
 
     def run(self) -> None:
-        # CAP_DSHOW is fastest on Windows for UVC cameras
         cap = cv2.VideoCapture(self._camera_index, cv2.CAP_DSHOW)
         if not cap.isOpened():
-            # Fallback without backend hint
             cap = cv2.VideoCapture(self._camera_index)
         if not cap.isOpened():
             self.camera_error.emit(f"Cannot open camera {self._camera_index}")
             return
 
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._height)
         cap.set(cv2.CAP_PROP_FPS, self._target_fps)
+        # MJPEG gives much higher frame rates over USB than raw YUY2
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
-        frame_interval = 1.0 / self._target_fps
+        # Warm up: discard first few frames (camera AGC settling)
+        for _ in range(5):
+            cap.read()
+
+        # Measure actual FPS over 20 frames
+        t0 = time.monotonic()
+        for _ in range(20):
+            cap.read()
+        measured_fps = 20.0 / max(time.monotonic() - t0, 0.001)
+        measured_fps = round(measured_fps, 2)
+
+        # Emit actual camera resolution (may differ from requested)
+        ok, probe = cap.read()
+        if not ok:
+            self.camera_error.emit("Camera opened but cannot read frames")
+            cap.release()
+            return
+        h, w = probe.shape[:2]
+        self.frame_size_ready.emit(w, h, measured_fps)
+
+        frame_interval = 1.0 / measured_fps
+        self._pending = False
+
+        # Emit the probe frame first
+        self._pending = True
+        self.frame_ready.emit(probe)
 
         while self._running:
             t_start = time.monotonic()
@@ -91,13 +87,14 @@ class CameraThread(QThread):
                 self.camera_error.emit("Failed to read frame")
                 break
 
-            result = self._tracker.process(frame)
-            self.frame_ready.emit(result["annotated_frame"])
-            self.tracking_result.emit(result)
+            # Drop frame if UI thread hasn't finished with the previous one
+            if not self._pending:
+                self._pending = True
+                self.frame_ready.emit(frame)
 
             elapsed = time.monotonic() - t_start
             sleep_s = frame_interval - elapsed
-            if sleep_s > 0:
+            if sleep_s > 0.001:
                 time.sleep(sleep_s)
 
         cap.release()

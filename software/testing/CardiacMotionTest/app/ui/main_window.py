@@ -1,52 +1,50 @@
+import json
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
-    QComboBox, QFileDialog, QHBoxLayout, QLabel,
-    QMainWindow, QPushButton, QScrollArea, QSplitter,
-    QStatusBar, QTabWidget, QVBoxLayout, QWidget,
+    QComboBox, QHBoxLayout, QLabel, QLineEdit,
+    QMainWindow, QPushButton, QSplitter,
+    QStatusBar, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from core.camera import CameraThread
-from core.recorder import DataRecorder
 from core.serial_comm import SerialThread
-from utils.calibration import Calibration
+from core.video_recorder import VideoRecorder
+from core.session import Session
 from ui.camera_widget import CameraWidget
-from ui.graph_widget import GraphWidget
 from ui.pwm_panel import PwmPanel
-from ui.tracking_panel import TrackingPanel
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AngioSim — Cardiac Motion Controller")
-        self.resize(1400, 820)
+        self.setWindowTitle("AngioSim — Recording")
+        self.resize(1280, 760)
 
-        self._calibration = Calibration()
-        self._recorder = DataRecorder()
-        self._calib_pending_mm: float | None = None
+        self._video_recorder = VideoRecorder()
+        self._session_folder: Path | None = None
+        self._frame_w = 1280
+        self._frame_h = 720
+        self._actual_fps = 30.0
 
-        self._camera_thread = CameraThread()
+        self._camera_thread: CameraThread | None = None
         self._serial_thread = SerialThread()
-
-        self._pump_duty = 0
-        self._valve_duty = 0
 
         self._setup_ui()
         self._connect_signals()
+        self._load_settings()
 
-        # Ping ESP32 every 5s when connected
         self._ping_timer = QTimer(self)
         self._ping_timer.setInterval(5000)
         self._ping_timer.timeout.connect(self._serial_thread.ping)
 
-        self._camera_thread.start_capture()
+        self._restart_camera_thread()
 
     # ------------------------------------------------------------------
-    # UI construction
+    # UI
     # ------------------------------------------------------------------
 
     def _setup_ui(self):
@@ -59,146 +57,119 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         root.addWidget(splitter)
 
-        # ---- Left: camera + graph -----------------------------------
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
+        # ---- Left: camera + record button ---------------------------
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(4)
 
         self._camera_widget = CameraWidget()
-        left_layout.addWidget(self._camera_widget, stretch=3)
+        left_layout.addWidget(self._camera_widget, stretch=1)
 
-        self._graph_widget = GraphWidget(window_seconds=10)
-        self._graph_widget.setMinimumHeight(180)
-        left_layout.addWidget(self._graph_widget, stretch=1)
-
-        # Record controls row
+        # Record row
         rec_row = QHBoxLayout()
-        self._btn_record = QPushButton("Start Recording")
+        self._btn_record = QPushButton("● Start Recording")
         self._btn_record.setCheckable(True)
         self._btn_record.setStyleSheet(
             "QPushButton:checked { background-color: #c0392b; color: white; font-weight: bold; }"
+            "QPushButton:!checked { background-color: #444; color: white; }"
         )
         self._btn_record.toggled.connect(self._on_record_toggled)
         rec_row.addWidget(self._btn_record)
 
-        btn_gen_graph = QPushButton("Generate Graph from CSV…")
-        btn_gen_graph.clicked.connect(self._on_generate_graph)
-        rec_row.addWidget(btn_gen_graph)
-
-        btn_clear_graph = QPushButton("Clear Graph")
-        btn_clear_graph.clicked.connect(self._graph_widget.clear_data)
-        rec_row.addWidget(btn_clear_graph)
-
+        self._lbl_frames = QLabel("Frames: 0")
+        self._lbl_frames.setStyleSheet("color: #aaa; font-size: 11px;")
+        self._lbl_fps = QLabel("FPS: —")
+        self._lbl_fps.setStyleSheet("color: #aaa; font-size: 11px;")
+        rec_row.addWidget(self._lbl_frames)
+        rec_row.addWidget(self._lbl_fps)
+        rec_row.addStretch()
         left_layout.addLayout(rec_row)
-        splitter.addWidget(left_widget)
+
+        splitter.addWidget(left)
 
         # ---- Right: controls ----------------------------------------
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(6)
 
-        # Camera selector row
-        camera_group = self._build_camera_row()
-        right_layout.addWidget(camera_group)
+        # Session info
+        right_layout.addWidget(self._sep("Session"))
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("Name:"))
+        self._session_name = QLineEdit()
+        self._session_name.setPlaceholderText("e.g. baseline_no_accumulator")
+        name_row.addWidget(self._session_name)
+        right_layout.addLayout(name_row)
 
-        # Serial connection row
-        serial_group = self._build_serial_row()
-        right_layout.addWidget(serial_group)
+        right_layout.addWidget(QLabel("Notes:"))
+        self._session_notes = QTextEdit()
+        self._session_notes.setFixedHeight(60)
+        self._session_notes.setPlaceholderText("Optional notes about this run…")
+        right_layout.addWidget(self._session_notes)
 
-        # Tabs: PWM | Tracking
-        tabs = QTabWidget()
+        # Camera selector
+        right_layout.addWidget(self._sep("Camera"))
+        right_layout.addLayout(self._build_camera_row())
+
+        # Serial
+        right_layout.addWidget(self._sep("ESP32 Serial"))
+        right_layout.addLayout(self._build_serial_row())
+
+        # PWM
+        right_layout.addWidget(self._sep("PWM"))
+        from PyQt6.QtWidgets import QScrollArea
         self._pwm_panel = PwmPanel()
-        self._tracking_panel = TrackingPanel()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self._pwm_panel)
+        right_layout.addWidget(scroll, stretch=1)
 
-        pwm_scroll = QScrollArea()
-        pwm_scroll.setWidgetResizable(True)
-        pwm_scroll.setWidget(self._pwm_panel)
-        tabs.addTab(pwm_scroll, "PWM Control")
-        tabs.addTab(self._tracking_panel, "Tracking")
+        splitter.addWidget(right)
+        splitter.setSizes([820, 420])
 
-        right_layout.addWidget(tabs, stretch=1)
-
-        # Status info labels
-        self._lbl_displacement = QLabel("Displacement: —")
-        self._lbl_bpm = QLabel("BPM: —")
-        self._lbl_area = QLabel("Area: —")
-        for lbl in (self._lbl_displacement, self._lbl_bpm, self._lbl_area):
-            lbl.setStyleSheet("font-size: 12px; color: #ccc;")
-        right_layout.addWidget(self._lbl_displacement)
-        right_layout.addWidget(self._lbl_bpm)
-        right_layout.addWidget(self._lbl_area)
-
-        splitter.addWidget(right_widget)
-        splitter.setSizes([950, 430])
-
-        # Status bar
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
         self._status_bar.showMessage("Camera starting…")
 
-    def _build_camera_row(self) -> QWidget:
-        group = QWidget()
-        layout = QHBoxLayout(group)
-        layout.setContentsMargins(0, 0, 0, 0)
+    # (width, height, label)
+    RESOLUTIONS = [
+        (640,  480,  "640×480"),
+        (1280, 720,  "1280×720"),
+        (1920, 1080, "1920×1080"),
+    ]
 
+    def _build_camera_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
         self._camera_combo = QComboBox()
         self._camera_combo.setMinimumWidth(110)
+        for i in range(6):
+            self._camera_combo.addItem(f"Camera {i}", userData=i)
+
+        self._res_combo = QComboBox()
+        for w, h, label in self.RESOLUTIONS:
+            self._res_combo.addItem(label, userData=(w, h))
+        self._res_combo.setCurrentIndex(1)   # default 1280×720
 
         btn_scan = QPushButton("Scan")
         btn_scan.setFixedWidth(50)
-        btn_scan.setToolTip("Scan for connected cameras (may take a moment)")
         btn_scan.clicked.connect(self._refresh_cameras)
 
         btn_switch = QPushButton("Switch")
         btn_switch.setFixedWidth(55)
         btn_switch.clicked.connect(self._on_switch_camera)
 
-        layout.addWidget(QLabel("Camera:"))
-        layout.addWidget(self._camera_combo)
-        layout.addWidget(btn_scan)
-        layout.addWidget(btn_switch)
-        layout.addStretch()
+        row.addWidget(QLabel("Cam:"))
+        row.addWidget(self._camera_combo)
+        row.addWidget(self._res_combo)
+        row.addWidget(btn_scan)
+        row.addWidget(btn_switch)
+        row.addStretch()
+        return row
 
-        # Populate with a basic list; full scan on demand
-        for i in range(6):
-            self._camera_combo.addItem(f"Camera {i}", userData=i)
-        return group
-
-    def _refresh_cameras(self) -> None:
-        import cv2
-        self._status_bar.showMessage("Scanning cameras…")
-        self._camera_combo.clear()
-        for i in range(8):
-            cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
-            if cap.isOpened():
-                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                cap.release()
-                self._camera_combo.addItem(f"Camera {i}  ({w}×{h})", userData=i)
-        count = self._camera_combo.count()
-        self._status_bar.showMessage(f"Found {count} camera(s). Select and press Switch.", 4000)
-
-    def _on_switch_camera(self) -> None:
-        index = self._camera_combo.currentData()
-        if index is None:
-            return
-        self._camera_thread.stop_capture()
-        self._camera_thread = CameraThread(camera_index=index)
-        self._camera_thread.frame_ready.connect(self._on_frame_ready)
-        self._camera_thread.tracking_result.connect(self._on_tracking_result)
-        self._camera_thread.camera_error.connect(
-            lambda msg: self._status_bar.showMessage(f"Camera error: {msg}")
-        )
-        self._camera_thread.start_capture()
-        self._status_bar.showMessage(f"Switched to Camera {index}", 3000)
-
-    def _build_serial_row(self) -> QWidget:
-        group = QWidget()
-        layout = QHBoxLayout(group)
-        layout.setContentsMargins(0, 0, 0, 0)
-
+    def _build_serial_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
         self._port_combo = QComboBox()
         self._port_combo.setMinimumWidth(110)
         self._refresh_ports()
@@ -211,72 +182,45 @@ class MainWindow(QMainWindow):
         self._btn_connect.setCheckable(True)
         self._btn_connect.toggled.connect(self._on_connect_toggled)
 
-        layout.addWidget(QLabel("Port:"))
-        layout.addWidget(self._port_combo)
-        layout.addWidget(btn_refresh)
-        layout.addWidget(self._btn_connect)
-        layout.addStretch()
-        return group
+        row.addWidget(QLabel("Port:"))
+        row.addWidget(self._port_combo)
+        row.addWidget(btn_refresh)
+        row.addWidget(self._btn_connect)
+        row.addStretch()
+        return row
+
+    @staticmethod
+    def _sep(title: str = "") -> QLabel:
+        lbl = QLabel(f"  {title}" if title else "")
+        lbl.setFixedHeight(18)
+        lbl.setStyleSheet(
+            "background: #333; color: #aaa; font-size: 10px; "
+            "border-radius: 2px; padding-left: 4px;"
+        )
+        return lbl
 
     # ------------------------------------------------------------------
-    # Signal wiring
+    # Signals
     # ------------------------------------------------------------------
 
     def _connect_signals(self):
-        # Camera thread → UI
-        self._camera_thread.frame_ready.connect(self._on_frame_ready)
-        self._camera_thread.tracking_result.connect(self._on_tracking_result)
-        self._camera_thread.camera_error.connect(
-            lambda msg: self._status_bar.showMessage(f"Camera error: {msg}")
-        )
+        # Camera thread signals are wired in _restart_camera_thread() because
+        # the thread object is recreated on every switch/scan.
 
-        # Serial thread → UI
-        self._serial_thread.ack_received.connect(self._on_ack_received)
+        self._serial_thread.ack_received.connect(
+            lambda ack: self._status_bar.showMessage(f"ESP32: {ack}", 2000)
+        )
         self._serial_thread.error_received.connect(
-            lambda msg: self._status_bar.showMessage(f"Serial: {msg}")
+            lambda msg: self._status_bar.showMessage(f"Serial error: {msg}")
         )
         self._serial_thread.connected.connect(
             lambda: self._status_bar.showMessage("ESP32 connected")
         )
         self._serial_thread.disconnected.connect(self._on_serial_disconnected)
 
-        # PWM panel → serial
-        self._pwm_panel.board_enable_changed.connect(self._on_board_enable_changed)
-        self._pwm_panel.pwm_changed.connect(self._on_pwm_changed)
-
-        # Tracking panel → camera thread
-        self._tracking_panel.set_roi_requested.connect(
-            self._camera_widget.begin_roi_draw
-        )
-        self._tracking_panel.set_line_requested.connect(
-            self._camera_widget.begin_line_set
-        )
-        self._tracking_panel.clear_roi_requested.connect(
-            lambda: self._camera_thread.set_roi(None)
-        )
-        self._tracking_panel.reset_reference_requested.connect(
-            self._camera_thread.reset_reference
-        )
-        self._tracking_panel.threshold_changed.connect(
-            self._camera_thread.set_thresholds
-        )
-        self._tracking_panel.morph_size_changed.connect(
-            self._camera_thread.set_morph_kernel_size
-        )
-        self._tracking_panel.overlay_toggled.connect(
-            self._camera_thread.set_show_overlay
-        )
-        self._tracking_panel.calibration_requested.connect(
-            self._on_calibration_requested
-        )
-        self._tracking_panel.calib_line_requested.connect(
-            self._camera_widget.begin_calib_line_set
-        )
-
-        # Camera widget interaction → camera thread
-        self._camera_widget.roi_set.connect(self._on_roi_set)
-        self._camera_widget.line_set.connect(self._on_line_set)
-        self._camera_widget.calib_line_set.connect(self._on_calib_line_set)
+        self._pwm_panel.board_enable_changed.connect(self._serial_thread.set_board_enable)
+        self._pwm_panel.pwm_changed.connect(self._serial_thread.set_pwm)
+        self._pwm_panel.freq_changed.connect(self._serial_thread.set_freq)
 
     # ------------------------------------------------------------------
     # Slots
@@ -284,51 +228,24 @@ class MainWindow(QMainWindow):
 
     def _on_frame_ready(self, frame: np.ndarray) -> None:
         self._camera_widget.set_frame(frame)
+        if self._camera_thread:
+            self._camera_thread.mark_displayed()
+        if self._video_recorder.is_recording:
+            self._video_recorder.write_frame(frame)
+            self._lbl_frames.setText(f"Frames: {self._video_recorder.frame_count}")
 
-    def _on_tracking_result(self, result: dict) -> None:
-        d_mm = result.get("displacement_mm")
-        d_px = result.get("displacement_px", 0.0)
-        area = result.get("heart_area_px", 0)
-        bpm = result.get("bpm_estimate")
-        ts = result.get("timestamp", 0.0)
-
-        if d_mm is not None:
-            self._lbl_displacement.setText(f"Displacement: {d_mm:+.2f} mm")
-            self._graph_widget.update_data(ts, d_mm)
-        else:
-            self._lbl_displacement.setText(f"Displacement: {d_px:+.1f} px (not calibrated)")
-
-        self._lbl_bpm.setText(f"BPM: {bpm:.1f}" if bpm else "BPM: —")
-        self._lbl_area.setText(f"Area: {area} px²")
-
-        if self._recorder.is_recording:
-            self._recorder.record(
-                timestamp=ts,
-                displacement_mm=d_mm,
-                heart_area_px=area,
-                pump_duty=self._pump_duty,
-                valve_duty=self._valve_duty,
-                bpm_estimate=bpm,
-            )
-
-    def _on_ack_received(self, ack: str) -> None:
-        self._status_bar.showMessage(f"ESP32: {ack}", 2000)
+    def _on_frame_size_ready(self, w: int, h: int, fps: float) -> None:
+        self._frame_w = w
+        self._frame_h = h
+        self._actual_fps = fps
+        self._lbl_fps.setText(f"FPS: {fps:.1f}")
+        self._status_bar.showMessage(f"Camera ready: {w}×{h} @ {fps:.1f} fps", 4000)
 
     def _on_serial_disconnected(self) -> None:
         self._btn_connect.setChecked(False)
         self._btn_connect.setText("Connect")
         self._ping_timer.stop()
         self._status_bar.showMessage("ESP32 disconnected")
-
-    def _on_board_enable_changed(self, enabled: bool) -> None:
-        self._serial_thread.set_board_enable(enabled)
-
-    def _on_pwm_changed(self, channel: int, value: int) -> None:
-        self._serial_thread.set_pwm(channel, value)
-        if channel == 1:
-            self._pump_duty = value
-        elif channel == 2:
-            self._valve_duty = value
 
     def _on_connect_toggled(self, checked: bool) -> None:
         if checked:
@@ -344,66 +261,49 @@ class MainWindow(QMainWindow):
             self._btn_connect.setText("Connect")
             self._ping_timer.stop()
 
-    def _on_roi_set(self, roi: tuple) -> None:
-        self._camera_thread.set_roi(roi)
-        self._status_bar.showMessage(f"ROI set: {roi}", 3000)
-
-    def _on_line_set(self, p1: tuple, p2: tuple) -> None:
-        self._camera_thread.set_line(p1, p2)
-        self._status_bar.showMessage(f"Measurement line set: {p1} → {p2}", 3000)
-
-    def _on_calibration_requested(self, dist_mm: float) -> None:
-        self._calib_pending_mm = dist_mm
-        self._status_bar.showMessage(
-            f"Click two points spanning {dist_mm:.0f} mm on the image…"
-        )
-
-    def _on_calib_line_set(self, p1: tuple, p2: tuple) -> None:
-        if self._calib_pending_mm is None:
-            return
-        self._calibration.set_reference(p1, p2, self._calib_pending_mm)
-        self._calib_pending_mm = None
-        px_per_mm = self._calibration.px_per_mm
-        self._camera_thread.set_calibration(px_per_mm)
-        self._tracking_panel.update_calibration_label(px_per_mm)
-        self._status_bar.showMessage(
-            f"Calibrated: {px_per_mm:.2f} px/mm", 4000
-        )
-
     def _on_record_toggled(self, recording: bool) -> None:
         if recording:
+            label = self._session_name.text().strip().replace(" ", "_") or "session"
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            default_name = f"angiosim_{ts}.csv"
-            path, _ = QFileDialog.getSaveFileName(
-                self, "Save CSV", default_name, "CSV Files (*.csv)"
+            folder = Path("recordings") / f"{ts}_{label}"
+            folder.mkdir(parents=True, exist_ok=True)
+            self._session_folder = folder
+            self._video_recorder.start(
+                folder / "footage.mp4",
+                fps=self._actual_fps,
+                frame_size=(self._frame_w, self._frame_h),
             )
-            if not path:
-                self._btn_record.setChecked(False)
-                return
-            self._recorder.start(Path(path))
-            self._btn_record.setText("Stop Recording")
-            self._status_bar.showMessage(f"Recording to {path}")
+            self._btn_record.setText("■ Stop Recording")
+            self._lbl_frames.setText("Frames: 0")
+            self._status_bar.showMessage(f"Recording → {folder}")
         else:
-            self._recorder.stop()
-            self._btn_record.setText("Start Recording")
-            self._status_bar.showMessage("Recording stopped")
+            self._video_recorder.stop()
+            self._btn_record.setText("● Start Recording")
+            if self._session_folder:
+                self._save_session_json(self._session_folder)
+                self._status_bar.showMessage(
+                    f"Saved {self._video_recorder.frame_count} frames to {self._session_folder}"
+                )
 
-    def _on_generate_graph(self) -> None:
-        csv_path, _ = QFileDialog.getOpenFileName(
-            self, "Open CSV", "", "CSV Files (*.csv)"
+    def _save_session_json(self, folder: Path) -> None:
+        pwm = {
+            str(i + 1): {
+                "freq_hz": self._pwm_panel.current_freq(i + 1),
+                "duty": self._pwm_panel.current_duty(i + 1),
+            }
+            for i in range(4)
+        }
+        session = Session(
+            label=self._session_name.text().strip(),
+            notes=self._session_notes.toPlainText().strip(),
+            start_time=datetime.now().isoformat(),
+            fps=30.0,
+            frame_width=self._frame_w,
+            frame_height=self._frame_h,
+            total_frames=self._video_recorder.frame_count,
+            pwm_settings=pwm,
         )
-        if not csv_path:
-            return
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Graph Image", csv_path.replace(".csv", ".png"),
-            "PNG Images (*.png);;All Files (*)"
-        )
-        DataRecorder.generate_graph(
-            Path(csv_path),
-            Path(save_path) if save_path else None,
-        )
-        if save_path:
-            self._status_bar.showMessage(f"Graph saved to {save_path}", 4000)
+        session.save(folder)
 
     def _refresh_ports(self) -> None:
         current = self._port_combo.currentText()
@@ -413,14 +313,132 @@ class MainWindow(QMainWindow):
         if current in ports:
             self._port_combo.setCurrentText(current)
 
+    def _refresh_cameras(self) -> None:
+        import cv2
+        self._status_bar.showMessage("Scanning cameras — stopping live feed temporarily…")
+        # Must stop the camera thread first; DSHOW can't share a camera on Windows
+        self._camera_thread.stop_capture()
+        self._camera_widget.setText("Scanning cameras…")
+
+        self._camera_combo.clear()
+        for i in range(8):
+            try:
+                cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+                if cap.isOpened():
+                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                    self._camera_combo.addItem(f"Camera {i}  ({w}×{h})", userData=i)
+                else:
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        count = self._camera_combo.count()
+        self._status_bar.showMessage(
+            f"Found {count} camera(s). Select one and press Switch.", 4000
+        )
+
+        # Restart with whichever camera is now selected
+        self._restart_camera_thread()
+
+    def _on_switch_camera(self) -> None:
+        self._camera_thread.stop_capture()
+        self._restart_camera_thread()
+
+    def _restart_camera_thread(self) -> None:
+        index = self._camera_combo.currentData()
+        if index is None:
+            index = 0
+        res = self._res_combo.currentData() or (1280, 720)
+        self._camera_thread = CameraThread(
+            camera_index=index, width=res[0], height=res[1]
+        )
+        self._camera_thread.frame_ready.connect(self._on_frame_ready)
+        self._camera_thread.frame_size_ready.connect(self._on_frame_size_ready)
+        self._camera_thread.camera_error.connect(
+            lambda msg: self._status_bar.showMessage(f"Camera error: {msg}")
+        )
+        self._camera_thread.start_capture()
+        self._lbl_fps.setText("FPS: measuring…")
+
     # ------------------------------------------------------------------
-    # Cleanup
+    # Settings persistence
     # ------------------------------------------------------------------
 
+    _SETTINGS_PATH = Path(__file__).parent.parent / "app_settings.json"
+
+    def _load_settings(self) -> None:
+        if not self._SETTINGS_PATH.exists():
+            return
+        try:
+            s = json.loads(self._SETTINGS_PATH.read_text())
+        except Exception:
+            return
+
+        # Camera
+        cam_idx = s.get("camera_index", 0)
+        for i in range(self._camera_combo.count()):
+            if self._camera_combo.itemData(i) == cam_idx:
+                self._camera_combo.setCurrentIndex(i)
+                break
+        else:
+            self._camera_combo.addItem(f"Camera {cam_idx}", userData=cam_idx)
+            self._camera_combo.setCurrentIndex(self._camera_combo.count() - 1)
+
+        # Resolution
+        res = tuple(s.get("resolution", [1280, 720]))
+        for i in range(self._res_combo.count()):
+            if self._res_combo.itemData(i) == res:
+                self._res_combo.setCurrentIndex(i)
+                break
+
+        # Serial port
+        port = s.get("serial_port", "")
+        if port:
+            self._refresh_ports()
+            idx = self._port_combo.findText(port)
+            if idx >= 0:
+                self._port_combo.setCurrentIndex(idx)
+
+        # Session name & notes
+        self._session_name.setText(s.get("session_name", ""))
+        self._session_notes.setPlainText(s.get("session_notes", ""))
+
+        # PWM state
+        pwm_state = s.get("pwm_state")
+        if pwm_state:
+            self._pwm_panel.set_state(pwm_state)
+
+    def _save_settings(self) -> None:
+        res = self._res_combo.currentData() or (1280, 720)
+        s = {
+            "camera_index": self._camera_combo.currentData() or 0,
+            "resolution": list(res),
+            "serial_port": self._port_combo.currentText(),
+            "session_name": self._session_name.text().strip(),
+            "session_notes": self._session_notes.toPlainText().strip(),
+            "pwm_state": self._pwm_panel.get_state(),
+        }
+        try:
+            self._SETTINGS_PATH.write_text(json.dumps(s, indent=2))
+        except Exception:
+            pass
+
     def closeEvent(self, event) -> None:
-        self._camera_thread.stop_capture()
+        if self._video_recorder.is_recording:
+            self._video_recorder.stop()
+            if self._session_folder:
+                self._save_session_json(self._session_folder)
+        self._save_settings()
+        if self._camera_thread:
+            self._camera_thread.stop_capture()
         if self._serial_thread.isRunning():
             self._serial_thread.disconnect()
-        if self._recorder.is_recording:
-            self._recorder.stop()
         event.accept()

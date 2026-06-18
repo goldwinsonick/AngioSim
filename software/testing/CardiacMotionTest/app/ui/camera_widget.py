@@ -52,10 +52,11 @@ class CameraWidget(QLabel):
         self._img_h = h
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888)
+        # FastTransformation for live preview — SmoothTransformation is too slow
         pix = QPixmap.fromImage(img).scaled(
             self.size(),
             Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+            Qt.TransformationMode.FastTransformation,
         )
         self.setPixmap(pix)
 
