@@ -4,6 +4,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QSlider, QDoubleSpinBox, QGridLayout,
     QScrollArea, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QFileDialog,
+    QLineEdit,
 )
 from core.pipeline import PipelineStage, ParamDescriptor
 
@@ -131,6 +132,12 @@ class StageConfigWidget(QWidget):
 
         self._title.setText(self._stage.name)
 
+        # Text / string params: shown as label + QLineEdit
+        for attr_name, label_text in self._stage.get_text_params():
+            w = self._make_text_row(attr_name, label_text)
+            self._inner_layout.addWidget(w)
+            self._dynamic_widgets.append(w)
+
         # File-path params: shown as a Browse button + filename label
         for attr_name, label_text, file_filter in self._stage.get_path_params():
             w = self._make_path_row(attr_name, label_text, file_filter)
@@ -147,6 +154,27 @@ class StageConfigWidget(QWidget):
             self._dynamic_widgets.append(row)
 
         self._inner_layout.addStretch(1)
+
+    def _make_text_row(self, attr_name: str, label_text: str) -> QWidget:
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 2, 0, 2)
+        layout.setSpacing(6)
+
+        lbl = QLabel(label_text)
+        lbl.setFixedWidth(80)
+
+        edit = QLineEdit(getattr(self._stage, attr_name, ""))
+        edit.setPlaceholderText("(none)")
+
+        def _on_edited(text: str) -> None:
+            setattr(self._stage, attr_name, text)
+            self.param_changed.emit()
+
+        edit.textChanged.connect(_on_edited)
+        layout.addWidget(lbl)
+        layout.addWidget(edit, stretch=1)
+        return container
 
     def _make_path_row(self, attr_name: str, label_text: str, file_filter: str) -> QWidget:
         container = QWidget()

@@ -18,7 +18,7 @@ class Grayscale(PipelineStage):
             ParamDescriptor("invert", "Invert",     0,   1,      0.0, 1.0,  0),
         ]
 
-    def process(self, frame: np.ndarray) -> np.ndarray:
+    def process(self, frame: np.ndarray, context: dict) -> np.ndarray:
         if frame.ndim == 3:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         else:

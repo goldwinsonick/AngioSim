@@ -28,7 +28,7 @@ class FisheyeCorrection(PipelineStage):
         super().set_param_value(name, value)
         self._map_cache = None   # invalidate on any param change
 
-    def process(self, frame: np.ndarray) -> np.ndarray:
+    def process(self, frame: np.ndarray, context: dict) -> np.ndarray:
         k1 = self._params["k1"]
         k2 = self._params["k2"]
         k3 = self._params["k3"]

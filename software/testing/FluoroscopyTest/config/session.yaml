@@ -1,7 +1,7 @@
 camera:
   resolution: 1080p @ 30fps
-  source: C:/Users/goldw/Documents/gswt/ITB/TA252602/Software/AngioSim/software/testing/FluoroscopyTest/data/integrated_test_2.mp4
-  source_type: video
+  source: 1
+  source_type: camera
 pipeline:
 - enabled: true
   name: FisheyeCorrection
@@ -16,22 +16,57 @@ pipeline:
   params:
     h: 1000.0
     w: 1000.0
-    x: 336.0
+    x: 306.0
     y: 0.0
+- enabled: true
+  mask_name: mask
+  name: ColorMask
+  params:
+    blur: 1.0
+    dilate: 7.0
+    erode: 8.0
+    hue_max: 96.0
+    hue_min: 64.0
+    invert: 0.0
+    sat_max: 255.0
+    sat_min: 0.0
+    val_max: 255.0
+    val_min: 0.0
+- enabled: true
+  mask_name: mask
+  name: MaskApply
+  params:
+    effect: 1.0
+    intensity: 0.12
+    tint_hue: 18.0
 - enabled: true
   name: Grayscale
   params:
-    alpha: 0.1
-    beta: -73.0
-    invert: 1.0
+    alpha: 0.7
+    beta: -87.0
+    invert: 0.0
 - enabled: true
   name: ImageOverlay
   params:
-    opacity: 0.46
+    opacity: 0.61
     scale: 1.12
     x: 0.0
     y: 0.0
   path: C:/Users/goldw/Documents/gswt/ITB/TA252602/Software/AngioSim/software/testing/FluoroscopyTest/assets/overlays/rib_overlay.png
+- enabled: true
+  name: Vignette
+  params:
+    feather: 0.4
+    radius: 0.7
+    strength: 0.36
+- enabled: true
+  name: FieldMask
+  params:
+    center_x: 0.5
+    center_y: 0.5
+    outside_val: 0
+    radius: 1.0
+    softness: 43.0
 ui:
   left_stage_index: 0
-  right_stage_index: 4
+  right_stage_index: 8

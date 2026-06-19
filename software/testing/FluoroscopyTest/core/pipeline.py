@@ -1,6 +1,6 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 import numpy as np
 
@@ -28,16 +28,17 @@ class PipelineStage(ABC):
     def name(self) -> str: ...
 
     @abstractmethod
-    def process(self, frame: np.ndarray) -> np.ndarray: ...
+    def process(self, frame: np.ndarray, context: dict) -> np.ndarray: ...
 
     @abstractmethod
     def get_params(self) -> list[ParamDescriptor]: ...
 
     def get_path_params(self) -> list[tuple[str, str, str]]:
-        """Override to expose file-path fields in the config UI.
-        Returns list of (attr_name, label, file_filter).
-        Example: [('_path', 'Overlay Image', 'Images (*.png *.jpg *.bmp)')]
-        """
+        """Returns list of (attr_name, label, file_filter) for file-path fields."""
+        return []
+
+    def get_text_params(self) -> list[tuple[str, str]]:
+        """Returns list of (attr_name, label) for free-text string fields."""
         return []
 
     def get_param_value(self, name: str) -> float:
@@ -47,17 +48,24 @@ class PipelineStage(ABC):
         self._params[name] = value
 
     def to_config(self) -> dict[str, Any]:
-        return {
+        cfg: dict[str, Any] = {
             "name": self.name,
             "enabled": self.enabled,
             "params": dict(self._params),
         }
+        for attr_name, _ in self.get_text_params():
+            cfg[attr_name.lstrip("_")] = getattr(self, attr_name, "")
+        return cfg
 
     def from_config(self, cfg: dict[str, Any]) -> None:
         self.enabled = cfg.get("enabled", True)
         for k, v in cfg.get("params", {}).items():
             if k in self._params:
                 self._params[k] = float(v)
+        for attr_name, _ in self.get_text_params():
+            key = attr_name.lstrip("_")
+            if key in cfg:
+                setattr(self, attr_name, str(cfg[key]))
 
 
 class Pipeline:
@@ -79,12 +87,15 @@ class Pipeline:
         self._stages.insert(to_index, stage)
 
     def process(self, frame: np.ndarray) -> list[np.ndarray]:
-        """Returns list of frames: index 0 = raw, index N = output of stage N."""
+        """Returns list of frames: index 0 = raw, index N = output of stage N.
+        A shared context dict is passed to every stage for the duration of
+        one frame's run (e.g. for mask stages to store and share masks)."""
         frames = [frame]
+        context: dict = {}
         current = frame
         for stage in self._stages:
             if stage.enabled:
-                current = stage.process(current)
+                current = stage.process(current, context)
             frames.append(current)
         return frames
 

@@ -56,7 +56,7 @@ class ImageOverlay(PipelineStage):
         self._cached_path = self._path
         return img
 
-    def process(self, frame: np.ndarray) -> np.ndarray:
+    def process(self, frame: np.ndarray, context: dict) -> np.ndarray:
         overlay = self._load_overlay()
         if overlay is None:
             return frame
