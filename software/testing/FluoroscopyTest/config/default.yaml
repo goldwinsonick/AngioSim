@@ -1,0 +1,18 @@
+camera:
+  source_type: camera
+  source: 0
+  resolution: "1080p @ 30fps"
+
+ui:
+  left_stage_index: 0
+  right_stage_index: 0
+
+pipeline:
+  - name: FisheyeCorrection
+    enabled: false
+    params:
+      k1: 0.0
+      k2: 0.0
+      k3: 0.0
+      k4: 0.0
+      zoom: 1.0

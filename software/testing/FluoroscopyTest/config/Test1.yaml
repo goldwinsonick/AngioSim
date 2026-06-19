@@ -1,0 +1,23 @@
+camera:
+  resolution: 1080p @ 30fps
+  source: C:/Users/goldw/Documents/gswt/ITB/TA252602/Software/AngioSim/software/testing/FluoroscopyTest/data/IntegratedTest_2.mp4
+  source_type: video
+pipeline:
+- enabled: false
+  name: FisheyeCorrection
+  params:
+    k1: -0.5800000000000001
+    k2: 0.0
+    k3: 0.0
+    k4: 0.0
+    zoom: 0.99
+- enabled: true
+  name: Crop
+  params:
+    h: 1000.0
+    w: 1000.0
+    x: 275.0
+    y: 0.0
+ui:
+  left_stage_index: 0
+  right_stage_index: 2

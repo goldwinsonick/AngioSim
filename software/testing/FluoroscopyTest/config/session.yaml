@@ -1,0 +1,37 @@
+camera:
+  resolution: 1080p @ 30fps
+  source: C:/Users/goldw/Documents/gswt/ITB/TA252602/Software/AngioSim/software/testing/FluoroscopyTest/data/integrated_test_2.mp4
+  source_type: video
+pipeline:
+- enabled: true
+  name: FisheyeCorrection
+  params:
+    k1: -0.5800000000000001
+    k2: 0.0
+    k3: 0.0
+    k4: 0.0
+    zoom: 0.99
+- enabled: true
+  name: Crop
+  params:
+    h: 1000.0
+    w: 1000.0
+    x: 336.0
+    y: 0.0
+- enabled: true
+  name: Grayscale
+  params:
+    alpha: 0.1
+    beta: -73.0
+    invert: 1.0
+- enabled: true
+  name: ImageOverlay
+  params:
+    opacity: 0.46
+    scale: 1.12
+    x: 0.0
+    y: 0.0
+  path: C:/Users/goldw/Documents/gswt/ITB/TA252602/Software/AngioSim/software/testing/FluoroscopyTest/assets/overlays/rib_overlay.png
+ui:
+  left_stage_index: 0
+  right_stage_index: 4
