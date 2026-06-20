@@ -23,10 +23,10 @@ pipeline:
   name: ColorMask
   params:
     blur: 1.0
-    dilate: 12.0
-    erode: 12.0
+    dilate: 7.0
+    erode: 8.0
     hue_max: 96.0
-    hue_min: 76.0
+    hue_min: 64.0
     invert: 0.0
     sat_max: 255.0
     sat_min: 0.0
@@ -35,7 +35,7 @@ pipeline:
 - enabled: true
   name: Grayscale
   params:
-    alpha: 0.7
+    alpha: 0.25
     beta: 14.0
     invert: 0.0
 - enabled: true
@@ -51,7 +51,7 @@ pipeline:
   name: MaskApply
   params:
     effect: 1.0
-    intensity: 0.19
+    intensity: 0.09
     tint_hue: 18.0
 - enabled: true
   name: Grain
@@ -72,14 +72,6 @@ pipeline:
     outside_val: 0.0
     radius: 1.0
     softness: 43.0
-- enabled: true
-  name: Transform
-  params:
-    angle: 137.0
-    border_val: 0
-    center_x: 0.5
-    center_y: 0.5
-    zoom: 1.0
 ui:
   left_stage_index: 0
-  right_stage_index: 10
+  right_stage_index: 9

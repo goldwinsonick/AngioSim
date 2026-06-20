@@ -7,6 +7,8 @@ from .mask_combine import MaskCombine
 from .mask_apply import MaskApply
 from .vignette import Vignette
 from .field_mask import FieldMask
+from .grain import Grain
+from .transform import Transform
 
 STAGE_REGISTRY: dict[str, type] = {
     FisheyeCorrection.stage_name: FisheyeCorrection,
@@ -18,4 +20,6 @@ STAGE_REGISTRY: dict[str, type] = {
     MaskApply.stage_name: MaskApply,
     Vignette.stage_name: Vignette,
     FieldMask.stage_name: FieldMask,
+    Grain.stage_name: Grain,
+    Transform.stage_name: Transform,
 }
