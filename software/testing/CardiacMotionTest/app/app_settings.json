@@ -4,14 +4,14 @@
     1280,
     720
   ],
-  "serial_port": "COM7",
+  "serial_port": "COM9",
   "session_name": "Integrated Test",
   "session_notes": "",
   "pwm_state": {
     "1": {
       "mode": 0,
       "freq": 20000,
-      "always_duty": 150,
+      "always_duty": 100,
       "sys_duty": 2,
       "dia_duty": 0,
       "bpm": 60,
@@ -34,7 +34,7 @@
     },
     "3": {
       "mode": 1,
-      "freq": 1000,
+      "freq": 2000,
       "always_duty": 0,
       "sys_duty": 255,
       "dia_duty": 0,
@@ -47,7 +47,7 @@
     "4": {
       "mode": 0,
       "freq": 1000,
-      "always_duty": 50,
+      "always_duty": 0,
       "sys_duty": 200,
       "dia_duty": 0,
       "bpm": 60,

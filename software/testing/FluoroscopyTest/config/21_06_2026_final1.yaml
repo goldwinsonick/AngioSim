@@ -87,4 +87,4 @@ pipeline:
     softness: 43.0
 ui:
   left_stage_index: 0
-  right_stage_index: 11
+  right_stage_index: 10

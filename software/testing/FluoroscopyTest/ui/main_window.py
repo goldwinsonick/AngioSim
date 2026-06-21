@@ -1,6 +1,8 @@
 from __future__ import annotations
+import time
 import yaml
 import numpy as np
+from collections import deque
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
@@ -33,6 +35,7 @@ class MainWindow(QMainWindow):
         self._last_frames: list[np.ndarray] = []
         self._last_seq: int = -1
         self._browse_path: str = ""
+        self._out_timestamps: deque[float] = deque(maxlen=30)
 
         self._build_ui()
         self._connect_signals()
@@ -102,9 +105,13 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
 
         # ---- stats (never embedded in image) ----
-        self._lbl_fps = QLabel("FPS: --")
-        self._lbl_fps.setFixedWidth(80)
-        tb.addWidget(self._lbl_fps)
+        self._lbl_src_fps = QLabel("Src: --")     # camera/video capture rate
+        self._lbl_src_fps.setFixedWidth(75)
+        tb.addWidget(self._lbl_src_fps)
+
+        self._lbl_out_fps = QLabel("Out: --")     # actual processed/displayed rate
+        self._lbl_out_fps.setFixedWidth(75)
+        tb.addWidget(self._lbl_out_fps)
 
         self._lbl_res_info = QLabel("--x--")
         self._lbl_res_info.setFixedWidth(90)
@@ -161,7 +168,7 @@ class MainWindow(QMainWindow):
         # Pull timer: fires at ~30fps, pulls latest frame from the camera thread.
         # This decouples display rate from camera rate and prevents signal queue flooding.
         self._display_timer = QTimer(self)
-        self._display_timer.setInterval(33)
+        self._display_timer.setInterval(16)
 
     # ------------------------------------------------------------------
     # Signal Wiring
@@ -284,7 +291,9 @@ class MainWindow(QMainWindow):
         self._camera.stop()
         self._btn_action.setText("Start")
         self._dual_view.clear()
-        self._lbl_fps.setText("FPS: --")
+        self._lbl_src_fps.setText("Src: --")
+        self._lbl_out_fps.setText("Out: --")
+        self._out_timestamps.clear()
         self._last_seq = -1
 
     # ------------------------------------------------------------------
@@ -301,25 +310,34 @@ class MainWindow(QMainWindow):
         self._on_frame(frame)
 
     def _on_frame(self, frame: np.ndarray) -> None:
-        stage_frames, elapsed_ms = self._processor.process(frame)
+        stage_frames, elapsed_ms, timings = self._processor.process(frame)
         self._last_frames = stage_frames
         h, w = frame.shape[:2]
         self._lbl_res_info.setText(f"{w}x{h}")
         self._lbl_proc.setText(f"Proc: {elapsed_ms:.1f}ms")
         self._dual_view.update_frames(stage_frames)
+        self._pipeline_editor.update_timings(timings)
+
+        now = time.monotonic()
+        self._out_timestamps.append(now)
+        if len(self._out_timestamps) >= 2:
+            span = self._out_timestamps[-1] - self._out_timestamps[0]
+            out_fps = (len(self._out_timestamps) - 1) / span if span > 0 else 0.0
+            self._lbl_out_fps.setText(f"Out: {out_fps:.1f}")
 
     def _reprocess_last(self) -> None:
         if not self._last_frames:
             return
         raw = self._last_frames[0]
-        stage_frames, elapsed_ms = self._processor.process(raw)
+        stage_frames, elapsed_ms, timings = self._processor.process(raw)
         self._last_frames = stage_frames
         self._lbl_proc.setText(f"Proc: {elapsed_ms:.1f}ms")
         self._dual_view.update_frames(stage_frames)
+        self._pipeline_editor.update_timings(timings)
 
     @pyqtSlot(float)
     def _on_fps(self, fps: float) -> None:
-        self._lbl_fps.setText(f"FPS: {fps:.1f}")
+        self._lbl_src_fps.setText(f"Src: {fps:.1f}")
 
     @pyqtSlot(str)
     def _on_camera_error(self, msg: str) -> None:

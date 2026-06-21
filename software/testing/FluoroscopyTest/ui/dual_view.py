@@ -70,14 +70,16 @@ class ImagePanel(QWidget):
             self._combo.setCurrentIndex(index)
 
     def show_frame(self, frame: np.ndarray) -> None:
-        pix = _ndarray_to_pixmap(frame)
         available = self._image_label.size()
-        pix = pix.scaled(
-            available,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._image_label.setPixmap(pix)
+        tw, th = available.width(), available.height()
+        if tw <= 0 or th <= 0:
+            return
+        fh, fw = frame.shape[:2]
+        scale = min(tw / fw, th / fh)
+        new_w = max(1, int(fw * scale))
+        new_h = max(1, int(fh * scale))
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        self._image_label.setPixmap(_ndarray_to_pixmap(resized))
 
     def clear(self) -> None:
         self._image_label.clear()

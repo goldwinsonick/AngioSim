@@ -73,19 +73,33 @@ class PipelineEditor(QWidget):
         layout.addLayout(btn_row)
         layout.addWidget(self._list)
 
+        self._last_timings: list[float] = []
         self.refresh()
 
     # ------------------------------------------------------------------
     def refresh(self) -> None:
         self._list.blockSignals(True)
         self._list.clear()
-        for stage in self._pipeline.stages:
-            item = QListWidgetItem(stage.name)
+        for i, stage in enumerate(self._pipeline.stages):
+            ms = self._last_timings[i] if i < len(self._last_timings) else None
+            label = f"{stage.name}  {ms:.1f}ms" if ms is not None and ms > 0 else stage.name
+            item = QListWidgetItem(label)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(
                 Qt.CheckState.Checked if stage.enabled else Qt.CheckState.Unchecked
             )
             self._list.addItem(item)
+        self._list.blockSignals(False)
+
+    def update_timings(self, timings: list[float]) -> None:
+        self._last_timings = timings
+        self._list.blockSignals(True)
+        for i, ms in enumerate(timings):
+            item = self._list.item(i)
+            if item is None:
+                break
+            stage_name = self._pipeline.stages[i].name if i < len(self._pipeline.stages) else ""
+            item.setText(f"{stage_name}  {ms:.1f}ms" if ms > 0 else stage_name)
         self._list.blockSignals(False)
 
     def stage_names_for_display(self) -> list[str]:

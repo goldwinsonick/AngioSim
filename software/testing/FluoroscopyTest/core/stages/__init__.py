@@ -9,6 +9,8 @@ from .vignette import Vignette
 from .field_mask import FieldMask
 from .grain import Grain
 from .transform import Transform
+from .downsample import Downsample
+from .upsample import Upsample
 
 STAGE_REGISTRY: dict[str, type] = {
     FisheyeCorrection.stage_name: FisheyeCorrection,
@@ -22,4 +24,6 @@ STAGE_REGISTRY: dict[str, type] = {
     FieldMask.stage_name: FieldMask,
     Grain.stage_name: Grain,
     Transform.stage_name: Transform,
+    Downsample.stage_name: Downsample,
+    Upsample.stage_name: Upsample,
 }

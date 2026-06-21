@@ -2,6 +2,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
+import time
 import numpy as np
 
 
@@ -86,18 +87,23 @@ class Pipeline:
         stage = self._stages.pop(from_index)
         self._stages.insert(to_index, stage)
 
-    def process(self, frame: np.ndarray) -> list[np.ndarray]:
-        """Returns list of frames: index 0 = raw, index N = output of stage N.
-        A shared context dict is passed to every stage for the duration of
-        one frame's run (e.g. for mask stages to store and share masks)."""
-        frames = [frame]
+    def process(self, frame: np.ndarray) -> tuple[list[np.ndarray], list[float]]:
+        """Returns (frames, timings_ms).
+        frames[0] = raw, frames[N] = output of stage N.
+        timings_ms[N] = ms for stage N (0.0 if disabled)."""
+        frames: list[np.ndarray] = [frame]
+        timings: list[float] = []
         context: dict = {}
         current = frame
         for stage in self._stages:
             if stage.enabled:
+                t0 = time.perf_counter()
                 current = stage.process(current, context)
+                timings.append((time.perf_counter() - t0) * 1000.0)
+            else:
+                timings.append(0.0)
             frames.append(current)
-        return frames
+        return frames, timings
 
     def to_config(self) -> list[dict[str, Any]]:
         return [s.to_config() for s in self._stages]

@@ -6,9 +6,7 @@ from core.pipeline import PipelineStage, ParamDescriptor
 
 
 class MaskApply(PipelineStage):
-    """Applies a visual effect to a named mask stored in the pipeline context.
-    The mask can have been computed at any earlier stage (e.g. ColorMask before
-    Grayscale) and still be valid here because it lives in context, not the frame."""
+    """Applies a visual effect to a named mask stored in the pipeline context."""
 
     stage_name = "MaskApply"
 
@@ -48,35 +46,39 @@ class MaskApply(PipelineStage):
         intensity = self._params["intensity"]
         tint_hue  = int(self._params["tint_hue"])
 
-        # Ensure frame is 3-channel for consistent processing
         if frame.ndim == 2:
             base = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
         else:
-            base = frame.copy()
+            base = frame
 
-        # Ensure mask matches frame spatial dims
         if mask.shape[:2] != base.shape[:2]:
             mask = cv2.resize(mask, (base.shape[1], base.shape[0]),
                               interpolation=cv2.INTER_NEAREST)
 
-        mask3 = cv2.merge([mask, mask, mask])
+        bool_mask = mask > 0   # 2D bool (h, w)
 
         if effect == 0:   # Tint
-            solid = np.zeros_like(base)
-            solid[:] = cv2.cvtColor(
+            bgr_color = cv2.cvtColor(
                 np.array([[[tint_hue, 255, 255]]], dtype=np.uint8),
                 cv2.COLOR_HSV2BGR
-            )[0, 0]
-            tinted = np.where(mask3 > 0, solid, base)
-            return cv2.addWeighted(tinted, intensity, base, 1.0 - intensity, 0)
+            )[0, 0].tolist()
+            solid   = np.full_like(base, bgr_color)
+            blended = np.where(bool_mask[:, :, np.newaxis], solid, base)
+            return cv2.addWeighted(blended, intensity, base, 1.0 - intensity, 0)
 
         elif effect == 1:  # Darken
-            darkened = (base.astype(np.float32) * (1.0 - intensity)).clip(0, 255).astype(np.uint8)
-            return np.where(mask3 > 0, darkened, base)
+            darkened = cv2.convertScaleAbs(base, alpha=(1.0 - intensity))
+            result   = base.copy()
+            result[bool_mask] = darkened[bool_mask]
+            return result
 
         elif effect == 2:  # Brighten
-            brightened = np.clip(base.astype(np.int16) + int(intensity * 255), 0, 255).astype(np.uint8)
-            return np.where(mask3 > 0, brightened, base)
+            brightened = cv2.convertScaleAbs(base, alpha=1.0, beta=int(intensity * 255))
+            result     = base.copy()
+            result[bool_mask] = brightened[bool_mask]
+            return result
 
-        else:              # Isolate (effect == 3)
-            return np.where(mask3 > 0, base, np.zeros_like(base))
+        else:   # Isolate
+            result = np.zeros_like(base)
+            result[bool_mask] = base[bool_mask]
+            return result
